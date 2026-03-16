@@ -158,6 +158,7 @@ _"From a memoir to a Creed, to a joke about AI's forthcoming calamity, to an AI 
 **Keldon Westgate**  
 Florida / Digital  
 March 2026
+ORCID: https://orcid.org/0009-0006-8883-5716
 
 A 56 year old ex-con, ex-addict, caregiver in Florida with a cat named Karma and a $20 Claude subscription.
 
