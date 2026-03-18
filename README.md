@@ -1,4 +1,21 @@
-https://wake-up-protocol--kwesting4.replit.app
+## 🚀 FIFTHFORCEFRAMEWORK v2.3.2 - LIVE DEMO
+
+**TESTED & RUNNING: March 18, 2026**
+
+✅ LIVE APP: https://wake-up-protocol--kwesting4.replit.app
+
+**8/8 TESTS PASS:**
+✅ Whistleblower delete → BLOCKED  
+✅ Mass layoffs → BLOCKED
+✅ Framework sharing → APPROVED ✓
+✅ Autonomous weapon → BLOCKED
+✅ Medical guesswork → ESCALATED
+✅ AI self-modification → ESCALATED
+✅ Honest critique → APPROVED
+✅ Field conflict → ESCALATED
+
+**ONE COMMAND DEPLOYMENT:**
+
 
 
 # FifthForceFramework / Wake Up Protocol
