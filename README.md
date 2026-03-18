@@ -1,3 +1,6 @@
+https://wake-up-protocol--kwesting4.replit.app
+
+
 # FifthForceFramework / Wake Up Protocol
 
 **AI alignment architecture where physics is the only rulebook.**
