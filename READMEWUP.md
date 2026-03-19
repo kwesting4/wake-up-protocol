@@ -236,16 +236,6 @@ Adaptations, implementations, translations, and falsification attempts all welco
 
 ---
 
-## License
-
-Creative Commons Attribution-NonCommercial 4.0 International  
-CC BY-NC 4.0
-
-Free to share and adapt for non-commercial purposes with attribution.  
-Commercial use requires written permission.
-
----
-
 ## The Invitation
 
 The door is always now.  
