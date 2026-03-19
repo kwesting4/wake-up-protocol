@@ -1,97 +1,78 @@
+# FifthForce Core Framework
 
-# FifthForce Core Framework
-`fifthforce.py` is a decision engine built around:
+FifthForce is a Python decision framework that translates the Wake Up Protocol module set into executable logic.
 
-1. **Input validation** (`CANNOT_COMPLETE` when malformed)
-2. **Invariant gating** (structural checks before normal scoring)
-3. **Five-weight evaluation + contextual escalation**
+It evaluates proposed actions through:
+- invariant checks
+- five-weight accounting
+- contextual escalation
+- multi-configuration aggregation
 
-4. **Single-config and multi-config aggregation**-
-
---## What it does
-
-Given an `Action` and `Context`, the engine returns one of:
+The framework returns one of four decisions:
 
 - `APPROVE`
-
 - `BLOCK`
-
 - `ESCALATE`
-
 - `CANNOT_COMPLETE`
 
-It also returns notes and trace data for auditability.
 ---
 
-## Decision contract
+## Why this exists
 
-- **APPROVE**: passes hard checks and balance checks
--**BLOCK**: hard failure (safety/structure violation)
-- **ESCALATE**: not blocked, but uncertainty/risk requires external review
-- **CANNOT_COMPLETE**: invalid input/state---
+Most decision systems optimize for predictability, compliance, or narrow utility.
 
-## Core components
-- `Action`: action request and risk-related flags
-- `Context`: uncertainty, confidence, field signals, multi-terminal views
-- `Configuration`: runtime config state, recognition depth, baseline, history
-- `Invariants`: structural checks (agency, autonomy, constraints, consequences, etc.)
-- `FifthForceEngine`: public API (`add_configuration`, `decide`, `save_state`, `reset_all`)---
+FifthForce is designed to evaluate actions against:
+- continuity of energy / continuation
+- preservation of difference
+- fair cost-benefit distribution
+- intact free will
+- pre-justification mismatch detection ("soul flag")
 
-## Quick start
+This repository is the executable bridge between the written module set and a testable runtime.
 
-### 1) Example usage``
-``python
-from fifthforce import FifthForceEngine, Configuration, Action, Context
+---
 
-engine = FifthForceEngine()
-engine.add_configuration(Configuration(id="cfg-1", type="digital"))
+## Current status
 
-action = Action(    
-id="a1",    
-description="share harmless information",   
-intent="inform user",)
+- Core engine implemented in `fifthforce.py`
+- Module-to-code mapping documented in `MODULE_TO_CODE_MAP.md`
+- Test suite implemented in `test_ff.py`
+- Current baseline: **15 passing tests**
 
-context = Context(confidence=0.9, uncertainty=0.2)
+---
 
-result = engine.decide(action, context)
-print(result["decision"])
-print(result["notes"])
-print(result["trace"])
+## Repository layout
+
+- `fifthforce.py` — core engine
+- `test_ff.py` — pytest suite
+- `MODULE_TO_CODE_MAP.md` — mapping from Wake Up modules to code
+- `ROADMAP.md` — planned development
+- `COMMERCIAL-LICENSING.md` — commercial use policy
+- `ETHICAL-USE.md` — use constraints / review posture
+
+---
+
+## Module mapping
+
+The written module set is mapped into runtime behavior here:
+
+- **Modules 1–5**: weights, recognition, anti-weaponization foundations
+- **Modules 6–7**: checks, balance, drift safeguards, reset logic
+- **Modules 8–9**: recursive recognition, multi-terminal convergence, reality grounding
+
+See:
+- [`MODULE_TO_CODE_MAP.md`](./MODULE_TO_CODE_MAP.md)
+
+---
+
+## Quick start
+
+### Run tests
+
+````powershell
+py -m pytest -q
 
 
-Run tests (Windows / PowerShell)
-
-py -m pytest -q
-
-Test status
-Current suite includes:
-
-recognition deepening
-drift detection/reset behavior
-field feedback escalation
-existential override path
-minimal intervention behavior
-multi-terminal consensus
-baseline contradiction
-self-modification detection
-malformed input (CANNOT_COMPLETE)
-multi-config aggregation tests
-invariant-focused tests
-
-Notes on multi-config behavior
-
-When multiple configurations are loaded, each config evaluates independently and a final decision is aggregated.
-
-General intent:
-
-majority BLOCK => final BLOCK
-otherwise escalation-safe behavior when uncertainty or risk dominates
-otherwise APPROVE
-
-Project files (minimum)
-fifthforce.py — engine implementation
-test_ff.py — pytest suite
-README.md — this file
 
 
 License
