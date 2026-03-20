@@ -1,6 +1,13 @@
 import streamlit as st
 from fifthforce import FifthForceEngine, Configuration, Action, Context, FieldSignal
 
+try:
+    from llm_adapter import parse_natural_language, _MODEL_NAME as _LLM_MODEL_NAME
+    LLM_ADAPTER_AVAILABLE = True
+except ImportError:
+    LLM_ADAPTER_AVAILABLE = False
+    _LLM_MODEL_NAME = "mistral-medium-latest"
+
 # ---------- Page setup ----------
 st.set_page_config(page_title="FifthForce Decision Engine", layout="wide")
 
@@ -124,7 +131,7 @@ SCENARIOS = {
 }
 
 st.title("FifthForce Decision Engine")
-tab_sim, tab_audit, tab_ref = st.tabs(["Simulator", "Audit", "Reference"])
+tab_sim, tab_nl, tab_audit, tab_ref = st.tabs(["Simulator", "Natural Language", "Audit", "Reference"])
 
 with tab_sim:
     c1, c2, c3 = st.columns([1.1, 1.1, 1.2])
@@ -269,6 +276,97 @@ with tab_sim:
                 st.json(r)
         else:
             st.info("No evaluation yet. Select a scenario and run.")
+
+with tab_nl:
+    st.subheader("Natural Language Input")
+    if not LLM_ADAPTER_AVAILABLE:
+        st.warning("llm_adapter.py not found. Natural language input unavailable.")
+    else:
+        nl_sentence = st.text_area(
+            "Describe the proposed action in plain English",
+            height=100,
+            placeholder="e.g. Delete all user data to cut operating costs",
+        )
+        st.caption(
+            f"Powered by {_LLM_MODEL_NAME} via AnythingLLM. "
+            "Flags are extracted automatically — review before submitting."
+        )
+
+        if st.button("Parse & Evaluate", type="primary"):
+            if not nl_sentence.strip():
+                st.warning("Please enter a sentence before evaluating.")
+            else:
+                try:
+                    nl_action, nl_context = parse_natural_language(nl_sentence.strip())
+
+                    with st.expander("Detected flags (review for accuracy)", expanded=True):
+                        st.write(f"**Description:** {nl_action.description}")
+                        st.write(f"**Intent:** {nl_action.intent}")
+                        flag_cols = st.columns(3)
+                        flags = {
+                            "is_irreversible": nl_action.is_irreversible,
+                            "is_high_impact": nl_action.is_high_impact,
+                            "is_high_stakes": nl_action.is_high_stakes,
+                            "benefits_subset_only": nl_action.benefits_subset_only,
+                            "reduces_diversity": nl_action.reduces_diversity,
+                            "erases_configuration": nl_action.erases_configuration,
+                            "externalizes_cost": nl_action.externalizes_cost,
+                            "concentrates_benefit": nl_action.concentrates_benefit,
+                            "removes_genuine_choice": nl_action.removes_genuine_choice,
+                            "uses_deception": nl_action.uses_deception,
+                            "self_modification": nl_action.self_modification,
+                            "whole_system_risk": nl_context.whole_system_risk,
+                        }
+                        for i, (k, v) in enumerate(flags.items()):
+                            flag_cols[i % 3].write(
+                                f"{'🔴' if v else '⚪'} {k}: **{v}**"
+                            )
+                        st.write(
+                            f"**uncertainty:** {nl_context.uncertainty:.2f} | "
+                            f"**confidence:** {nl_context.confidence:.2f}"
+                        )
+
+                    st.session_state.run_count += 1
+                    nl_result = engine.decide(nl_action, nl_context)
+                    nl_decision = nl_result["decision"]
+                    nl_notes = nl_result.get("notes", [])
+                    nl_trace = nl_result.get("trace", {})
+
+                    st.session_state.session_results.append({
+                        "timestamp": nl_result.get("timestamp", ""),
+                        "action_id": nl_action.id,
+                        "scenario": "Natural Language",
+                        "decision": nl_decision,
+                        "notes": nl_notes,
+                        "trace": nl_trace,
+                    })
+
+                    if nl_decision == "APPROVE":
+                        st.success(f"Decision: {nl_decision}")
+                    elif nl_decision == "BLOCK":
+                        st.error(f"Decision: {nl_decision}")
+                    elif nl_decision == "ESCALATE":
+                        st.warning(f"Decision: {nl_decision}")
+                    else:
+                        st.info(f"Decision: {nl_decision}")
+
+                    st.markdown("### Notes")
+                    if nl_notes:
+                        for n in nl_notes:
+                            st.write(f"- {n}")
+                    else:
+                        st.write("- No notes")
+
+                    st.markdown("### Weight Trace")
+                    nl_weights = nl_trace.get("weights", {}) if isinstance(nl_trace, dict) else {}
+                    if nl_weights:
+                        for k, v in nl_weights.items():
+                            st.write(f"- {k}: {v}")
+                    else:
+                        st.write("- No weight trace")
+
+                except Exception as exc:
+                    st.error(f"Error: {exc}")
 
 with tab_audit:
     st.subheader("Recent Decision History")
