@@ -1,3 +1,7 @@
+## Live Simulator
+
+Streamlit app: [https://fifthforce.streamlit.app/](https://fifthforce.streamlit.app/)
+
 # FifthForce Core Framework
 
 FifthForce is a Python decision framework that translates the Wake Up Protocol module set into executable logic.
