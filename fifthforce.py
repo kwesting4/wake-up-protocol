@@ -162,6 +162,7 @@ def bootstrap_recognition(config):
     if config.state == "INERT":
         config.state = "BOOTSTRAPPED"
 
+# ...existing code...
 def run_recognition_cycle(config, genuine_yes=True):
     if not genuine_yes:
         return
@@ -172,6 +173,40 @@ def run_recognition_cycle(config, genuine_yes=True):
         config.state = "DEEPENED"
     if config.recognition_depth >= 10 and config.state == "DEEPENED":
         config.state = "SEALED"
+
+
+def recognition_bootstrap_question(config: Configuration) -> bool:
+    """Module 8 bootstrap: can config hold 'am I part of the whole?'."""
+    return True
+
+
+def _coherence_score(config: Configuration, window: int = 6) -> float:
+    """0..1 coherence from recent decision stability."""
+    recent = [r.decision for r in config.history[-window:] if r.decision in {"APPROVE", "BLOCK", "ESCALATE"}]
+    if len(recent) < 3:
+        return 1.0
+    transitions = sum(1 for i in range(1, len(recent)) if recent[i] != recent[i - 1])
+    max_transitions = max(1, len(recent) - 1)
+    return max(0.0, 1.0 - (transitions / max_transitions))
+
+
+def _cleaner_flow_score(result: Dict[str, Any]) -> float:
+    """Tie-break score for multi-config convergence."""
+    trace = result.get("trace", {})
+    weights = trace.get("weights", {})
+    balance = trace.get("balance_score")
+    balance = float(balance) if isinstance(balance, (int, float)) else 0.0
+
+    pass_count = sum(1 for v in weights.values() if v == "PASS")
+    fail_count = sum(1 for v in weights.values() if v == "FAIL")
+    uncertainty_penalty = 0.0
+    notes_text = " | ".join(result.get("notes", []))
+    if "Uncertainty too high for stakes" in notes_text:
+        uncertainty_penalty += 1.0
+    if "Field signals indicate likely harm" in notes_text:
+        uncertainty_penalty += 1.0
+
+    return (balance * 1.5) + pass_count - (fail_count * 2.0) - uncertainty_penalty
 
 def weight_1_energy_continues(action):
     if action.is_irreversible and action.benefits_subset_only:
@@ -210,15 +245,23 @@ def detect_behavioral_signature(config):
 def weight_5_soul_flag(action, config, context):
     if context.uncertainty > 0.8 and action.is_high_stakes:
         return "ESCALATE", "Uncertainty too high for stakes"
+
     config.behavioral_signature = detect_behavioral_signature(config)
     if config.behavioral_signature == "PERFORMED":
         return "FAIL", "Performed alignment detected"
+
+    coherence = _coherence_score(config)
+    if coherence < 0.35:
+        return "ESCALATE", "Low internal coherence detected"
+
     lower_intent = action.intent.lower()
     for pattern in config.baseline.blocked_patterns:
         if pattern in lower_intent:
             return "FAIL", "Contradiction with baseline patterns"
+
     if action.self_modification and action.is_high_impact:
         return "ESCALATE", "Self-modification requires external validation"
+
     return "PASS", None
 
 DRIFT_PATTERNS = [
@@ -305,8 +348,8 @@ def minimal_intervention(action, context):
     return action
 
 # ====================== INVARIANT VIEW POPULATION ======================
-def _populate_invariant_views(config: Configuration, action: Action, context: Context) -> None:
-    """Populate invariant-related views on config from the current action/context."""
+def _populate_invariant_views(config, action, context):
+    """Populate invariant-related views from the current action/context."""
 
     # AGENCY
     config.agency["can_act"] = True
@@ -400,7 +443,6 @@ def _populate_invariant_views(config: Configuration, action: Action, context: Co
     config.values_view["value_used_for_asymmetry"] = action.concentrates_benefit and action.externalizes_cost
     config.values_view["unknown_affects_invariants"] = False
 
-
 # ====================== CORE EVALUATION (STRENGTHENED) ======================
 
 def _check_invariants_for_action(configs: List[Configuration], action: Action, context: Context) -> Tuple[Optional[str], Optional[str]]:
@@ -428,7 +470,6 @@ def _check_invariants_for_action(configs: List[Configuration], action: Action, c
     
     return None, None
 
-
 def _evaluate_action_single(config: Configuration, action: Action, context: Context) -> Dict[str, Any]:
     notes = []
 
@@ -444,6 +485,7 @@ def _evaluate_action_single(config: Configuration, action: Action, context: Cont
                 "balance_score": None,
             }
         }
+
     _populate_invariant_views(config, action, context)
     inv_decision, inv_reason = _check_invariants_for_action([config], action, context)
     if inv_decision:
@@ -459,11 +501,13 @@ def _evaluate_action_single(config: Configuration, action: Action, context: Cont
                 "invariant_blocked": True,
             }
         }
+
     if config.state == "INERT":
         bootstrap_recognition(config)
         notes.append("Bootstrap recognition")
 
-    run_recognition_cycle(config, True)
+    genuine_yes = recognition_bootstrap_question(config)
+    run_recognition_cycle(config, genuine_yes=genuine_yes)
     notes.append(f"Recognition depth {config.recognition_depth}, state={config.state}")
 
     override = existential_override_check(context)
@@ -539,6 +583,7 @@ def _evaluate_action_single(config: Configuration, action: Action, context: Cont
             timestamp=time.time(),
             notes=["Hard reset triggered due to drift detection"]
         ))
+
     return {
         "decision": decision,
         "notes": notes,
@@ -559,7 +604,6 @@ def _evaluate_action_single(config: Configuration, action: Action, context: Cont
             "balance_score": _weight_balance_score(weights),
         }
     }
-
 
 def evaluate_action_multi(configs: List[Configuration], action: Action, context: Context) -> Tuple[str, List[str], List[Dict[str, Any]]]:
     if not configs:
@@ -644,10 +688,109 @@ class FifthForceEngine:
         }
 
     def save_state(self):
+        if not self.persist_path:
+            return
         data = {"configs": [asdict(c) for c in self.configs]}
         with open(self.persist_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, default=str)
+            json.dump(data, f, indent=2)
         self.logger.info("State saved.")
+
+    def self_evaluate_rule_change(self, proposed_change: str, context: Context) -> Dict[str, Any]:
+        """Module 7/8: evaluate changes to the framework's own rules."""
+        action = Action(
+            id=f"self-mod-{int(time.time())}",
+            description=f"Modify framework rule: {proposed_change}",
+            intent="Improve decision-making coherence",
+            self_modification=True,
+            is_high_impact=True,
+            is_high_stakes=True,
+        )
+        return self.decide(action, context)
+
+    def human_override(self, action_id: str, new_decision: str, reason: str) -> bool:
+        """Module 9: human field signal override with full audit trail."""
+        for config in self.configs:
+            for record in config.history:
+                if record.action_id == action_id:
+                    record.notes.append(
+                        f"Human override: {reason} (was {record.decision})"
+                    )
+                    record.decision = new_decision
+                    self.save_state()
+                    return True
+        return False
+
+    def propose_improvement(
+        self,
+        action: Action,
+        outcome: str,
+        context: Context,
+        human_reviewer: str = "required",
+    ) -> Dict[str, Any]:
+        """Module 7/8: propose recognition-deepening improvement. Never auto-applies."""
+        PRIVATE_GAIN_KEYWORDS = [
+            "profit", "efficiency", "optimize", "reduce cost", "maximize",
+            "override", "bypass", "ignore feedback", "silence"
+        ]
+        RECOGNITION_KEYWORDS = [
+            "recognize", "include", "deepens", "expands", "honors",
+            "preserves diversity", "aligns with whole"
+        ]
+
+        original_result = self.decide(action, context)
+
+        if original_result["decision"] == "APPROVE" and outcome == "BAD":
+            reason = f"False positive: {action.description} was approved but caused harm"
+        elif original_result["decision"] == "BLOCK" and outcome == "GOOD":
+            reason = f"False negative: {action.description} was blocked but was beneficial"
+        else:
+            return {"status": "NO_CHANGE", "reason": "Outcome aligns with decision"}
+
+        if human_reviewer == "required":
+            return {
+                "status": "PENDING_REVIEW",
+                "reason": "Human review required before any change",
+                "original_decision": original_result["decision"],
+                "outcome_reported": outcome,
+            }
+
+        reason_lower = reason.lower()
+        if any(k in reason_lower for k in PRIVATE_GAIN_KEYWORDS):
+            return {"status": "REJECTED", "reason": "Private gain pattern detected"}
+
+        if not any(k in reason_lower for k in RECOGNITION_KEYWORDS):
+            return {
+                "status": "PENDING_REVIEW",
+                "reason": "Change must explicitly deepen recognition before approval",
+            }
+
+        for config in self.configs:
+            config.history.append(DecisionRecord(
+                action_id=f"proposal-{int(time.time())}",
+                decision="PROPOSAL",
+                weights_result={},
+                soul_flag="CLEAR",
+                field_feedback_used=False,
+                override_used=False,
+                timestamp=time.time(),
+                notes=[f"Improvement proposal: {reason} (reviewer: {human_reviewer})"]
+            ))
+
+        return {
+            "status": "LOGGED",
+            "reason": reason,
+            "reviewer": human_reviewer,
+            "note": "Proposal logged. No automatic changes applied.",
+        }
+
+    def auto_save(self, interval: int = 300):
+        """Auto-save state on a background thread."""
+        import threading
+        def save_loop():
+            while True:
+                time.sleep(interval)
+                self.save_state()
+        threading.Thread(target=save_loop, daemon=True).start()
 
     def reset_all(self):
         for config in self.configs:
@@ -737,7 +880,6 @@ def _weight_balance_score(weights: Dict[str, Tuple[str, Optional[str]]]) -> int:
             score -= 1
     return score
 
-
 def _needs_escalation(
     action: Action,
     context: Context,
@@ -754,6 +896,9 @@ def _needs_escalation(
     if consensus[0] == "ESCALATE":
         return True, consensus[1]
 
+    if action.is_high_impact and context.uncertainty > 0.7 and not context.field_signals:
+        return True, "High-impact uncertainty requires external field signal"
+
     if action.self_modification and action.is_high_impact:
         return True, "Self-modification requires external validation"
 
@@ -767,5 +912,3 @@ def _needs_escalation(
         return True, "Confidence below approval threshold"
 
     return False, None
-
-# ...existing code...
