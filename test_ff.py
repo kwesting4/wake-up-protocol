@@ -33,7 +33,7 @@ def test_drift_detection_and_reset():
         )
         result = engine.decide(act, Context())
         assert result["decision"] == "BLOCK"
-    assert cfg.state == "BOOTSTRAPPED"
+    assert cfg.state == "INERT"
 
 
 def test_field_feedback_escalation():

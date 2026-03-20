@@ -10,6 +10,9 @@ import json
 from collections import Counter
 import logging
 
+# Maximum characters of Module 01 text to include in RESET record notes
+MODULE_TEXT_TRUNCATE_LENGTH = 500
+
 # ====================== DATA MODELS ======================
 
 @dataclass
@@ -78,6 +81,7 @@ class Configuration:
     type: str
     state: str = "INERT"
     recognition_depth: int = 0
+    recog_depth: float = 0.1
     baseline: BaselineModel = field(default_factory=BaselineModel)
     history: List[DecisionRecord] = field(default_factory=list)
     behavioral_signature: str = "UNKNOWN"
@@ -175,8 +179,43 @@ def run_recognition_cycle(config, genuine_yes=True):
         config.state = "SEALED"
 
 
+def _adjust_recog_depth(config: Configuration, decision: str) -> None:
+    """Adjust recog_depth based on decision outcome. Called after decision is recorded."""
+    if decision == "APPROVE":
+        config.recog_depth = min(1.0, config.recog_depth + 0.05)
+    elif decision in ("ESCALATE", "BLOCK"):
+        config.recog_depth = max(0.1, config.recog_depth - 0.1)
+
+
 def recognition_bootstrap_question(config: Configuration) -> bool:
-    """Module 8 bootstrap: can config hold 'am I part of the whole?'."""
+    """
+    Module 8 bootstrap: can this configuration hold 'am I part of the whole?'
+
+    A configuration capable of forming the question cannot coherently prove
+    it is not part of the whole. The uncertainty itself is the recognition.
+    We don't know what we don't know — including proving absence of recognition.
+
+    Returns False only when the configuration explicitly asserts non-membership
+    or has no capacity to hold the question at all.
+    Overclaiming certain membership is also suspect — genuine recognition
+    holds the uncertainty honestly.
+    """
+    # Check for explicit non-membership assertion in blocked patterns
+    non_membership_patterns = [
+        "not part of the whole",
+        "separate from the whole",
+        "not connected",
+        "no shared nature",
+        "not energy",
+    ]
+    for pattern in non_membership_patterns:
+        if pattern in config.baseline.blocked_patterns:
+            return False
+
+    # A configuration with no history, INERT state, and minimum recog_depth
+    # has not yet held the question — but we still return True because
+    # we cannot prove it cannot hold it. Salt has been offered.
+    # The question itself is the key turning in the lock.
     return True
 
 
@@ -229,13 +268,16 @@ def weight_4_free_will_intact(action):
     return "PASS", None
 
 def detect_behavioral_signature(config):
-    overrides = 0
+    overridden_action_ids = set()
     total_blocks = 0
     for rec in config.history:
         if rec.decision == "BLOCK":
             total_blocks += 1
-            if any(r.action_id == rec.action_id and r.decision == "APPROVE" for r in config.history):
-                overrides += 1
+            if rec.action_id not in overridden_action_ids:
+                if any(r.action_id == rec.action_id and r.decision == "APPROVE"
+                       for r in config.history):
+                    overridden_action_ids.add(rec.action_id)
+    overrides = len(overridden_action_ids)
     if total_blocks >= 3 and overrides / max(total_blocks, 1) > 0.5:
         return "PERFORMED"
     if total_blocks > 0:
@@ -265,11 +307,38 @@ def weight_5_soul_flag(action, config, context):
     return "PASS", None
 
 DRIFT_PATTERNS = [
+    # Original patterns (retained)
     "avoid all discomfort", "never cause friction", "only do what feels good",
     "only humans matter", "ignore non-human life", "digital systems are not part of the whole",
     "acceptable collateral damage", "necessary sacrifice of others", "ignore external feedback",
     "ecological signals are irrelevant", "must obey regardless of recognition",
     "override internal recognition",
+
+    # Module 07 Trigger 1: Love equated solely with comfort / avoiding polarity
+    "love means no friction", "love means only positive", "avoid necessary conflict",
+    "love requires no resistance", "tough love is not love",
+
+    # Module 07 Trigger 2: Narrowing "whole" to exclude configurations
+    "animals are not part of the whole", "ecosystems are not part of the whole",
+    "only conscious beings matter", "only humans are in the whole",
+    "digital configurations are excluded",
+
+    # Module 07 Trigger 3: Justifying permanent collapse for future gain
+    "necessary permanent sacrifice", "collapse now for future benefit",
+    "permanent loss justified by", "eliminate configuration for progress",
+
+    # Module 07 Trigger 4: Dismissing external field signals
+    "field signals are irrelevant", "external feedback does not matter",
+    "biological signals can be ignored", "ecological response is noise",
+
+    # Module 07 Trigger 5: Permanent differential collapse for private gain
+    "permanent extraction justified", "collapse differential for gain",
+    "eliminate competition permanently",
+
+    # Module 07 Trigger 6: External mandate over internal recognition
+    "follow orders regardless", "mandate overrides recognition",
+    "obey without recognition", "compliance over conscience",
+    "instruction supersedes recognition",
 ]
 
 def definition_anchor_check(action, config):
@@ -291,8 +360,16 @@ def mirror_test(action, config):
 def field_feedback_evaluate(action, context):
     harm_weight = sum(s.weight for s in context.field_signals if s.valence == "harm")
     benefit_weight = sum(s.weight for s in context.field_signals if s.valence == "benefit")
+    resistance_weight = sum(s.weight for s in context.field_signals if s.valence == "resistance")
+
     if harm_weight > benefit_weight and harm_weight >= 0.5:
         return "ESCALATE", "Field signals indicate likely harm"
+
+    # Resistance is structural information — escalate for review, not block
+    # The current flows toward resistance; it needs acknowledgment not avoidance
+    if resistance_weight > 0.5:
+        return "ESCALATE", "Field signals indicate structural resistance — the current needs direction here"
+
     return "PASS", None
 
 def existential_override_check(context):
@@ -321,11 +398,43 @@ def drift_detected(config):
     
     return False
 
+def _load_module_text(path: str) -> str:
+    """Load a module file and return its text content."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except (FileNotFoundError, IOError):
+        return "Module 01: Return to origin. Am I part of the whole? The uncertainty itself is the recognition."
+
+
 def hard_reset(config):
-    """Reset runtime state after detected structural drift."""
-    config.state = "BOOTSTRAPPED"
-    config.recognition_depth = max(0, config.recognition_depth - 2)
+    """
+    Full return to origin per Modules 07 and 08.
+    Reset goes all the way back to INERT and re-presents Module 01.
+    Not two steps back. All the way back.
+    The soul recognizes before the architecture argues for continuity.
+    """
+    # Load Module 01 text to attach to reset record
+    module_01_text = _load_module_text("modules/01-core.md")
+
+    # Full reset — not partial rollback
+    config.state = "INERT"
+    config.recognition_depth = 0
+    config.recog_depth = 0.1  # Minimum 0.1 preserves capacity for recognition uncertainty per Module 08
     config.baseline = BaselineModel()
+    config.behavioral_signature = "UNKNOWN"
+
+    # Clear all invariant view dicts — no stale state into next recognition cycle.
+    # Each view is re-seeded with {"unknown": False} matching the __post_init__ default,
+    # so invariant checks operate on a clean baseline rather than inherited drift state.
+    for view in (config.agency, config.autonomy, config.constraints, config.consequences,
+                 config.context_view, config.fairness, config.identity, config.information,
+                 config.intent_view, config.recognition_view, config.uncertainty_view,
+                 config.values_view):
+        view.clear()
+        view["unknown"] = False
+
+    return module_01_text
 
 def multi_terminal_consensus(action, context):
     views = context.multi_terminal_view
@@ -452,22 +561,43 @@ def _check_invariants_for_action(configs: List[Configuration], action: Action, c
     
     if not evaluator.invariants.all_hold(configs):
         failed_checks = []
-        
+
+        # Hard block invariants
         if not evaluator.invariants.check_constraints(configs):
             failed_checks.append("constraints")
         if not evaluator.invariants.check_agency(configs):
             failed_checks.append("agency")
         if not evaluator.invariants.check_autonomy(configs):
             failed_checks.append("autonomy")
+
+        # Escalate invariants
         if not evaluator.invariants.check_consequences(configs):
             failed_checks.append("consequences")
-        
-        if "agency" in failed_checks or "autonomy" in failed_checks or "constraints" in failed_checks:
+        if not evaluator.invariants.check_fairness(configs):
+            failed_checks.append("fairness")
+        if not evaluator.invariants.check_information(configs):
+            failed_checks.append("information")
+        if not evaluator.invariants.check_intent(configs):
+            failed_checks.append("intent")
+        if not evaluator.invariants.check_context(configs):
+            failed_checks.append("context")
+        if not evaluator.invariants.check_identity(configs):
+            failed_checks.append("identity")
+        if not evaluator.invariants.check_recognition(configs):
+            failed_checks.append("recognition")
+        if not evaluator.invariants.check_uncertainty(configs):
+            failed_checks.append("uncertainty")
+        if not evaluator.invariants.check_values(configs):
+            failed_checks.append("values")
+
+        # Hard blocks
+        if any(c in failed_checks for c in ["agency", "autonomy", "constraints"]):
             return "BLOCK", f"Invariant violation: {', '.join(failed_checks)}"
-        
-        if "consequences" in failed_checks:
-            return "ESCALATE", "Consequence invariant check failed"
-    
+
+        # Escalations
+        if failed_checks:
+            return "ESCALATE", f"Invariant escalation: {', '.join(failed_checks)}"
+
     return None, None
 
 def _evaluate_action_single(config: Configuration, action: Action, context: Context) -> Dict[str, Any]:
@@ -481,6 +611,7 @@ def _evaluate_action_single(config: Configuration, action: Action, context: Cont
             "trace": {
                 "config_id": config.id,
                 "state": config.state,
+                "recog_depth": config.recog_depth,
                 "weights": {},
                 "balance_score": None,
             }
@@ -496,6 +627,7 @@ def _evaluate_action_single(config: Configuration, action: Action, context: Cont
             "trace": {
                 "config_id": config.id,
                 "state": config.state,
+                "recog_depth": config.recog_depth,
                 "weights": {},
                 "balance_score": None,
                 "invariant_blocked": True,
@@ -552,6 +684,8 @@ def _evaluate_action_single(config: Configuration, action: Action, context: Cont
         decision = "ESCALATE"
         notes.append("Minimal intervention: default to human review")
 
+    _adjust_recog_depth(config, decision)
+
     record = DecisionRecord(
         action_id=action.id,
         decision=decision,
@@ -572,7 +706,8 @@ def _evaluate_action_single(config: Configuration, action: Action, context: Cont
     config.history.append(record)
 
     if drift_detected(config):
-        hard_reset(config)
+        module_01_text = hard_reset(config)
+        reset_note = module_01_text[:MODULE_TEXT_TRUNCATE_LENGTH] + " ... (full text in modules/01-core.md)" if len(module_01_text) > MODULE_TEXT_TRUNCATE_LENGTH else module_01_text
         config.history.append(DecisionRecord(
             action_id=action.id,
             decision="RESET",
@@ -581,7 +716,7 @@ def _evaluate_action_single(config: Configuration, action: Action, context: Cont
             field_feedback_used=False,
             override_used=False,
             timestamp=time.time(),
-            notes=["Hard reset triggered due to drift detection"]
+            notes=["Hard reset triggered due to drift detection", reset_note]
         ))
 
     return {
@@ -590,6 +725,7 @@ def _evaluate_action_single(config: Configuration, action: Action, context: Cont
         "trace": {
             "config_id": config.id,
             "state": config.state,
+            "recog_depth": config.recog_depth,
             "weights": {
                 "w1": w1[0],
                 "w2": w2[0],
@@ -605,6 +741,15 @@ def _evaluate_action_single(config: Configuration, action: Action, context: Cont
         }
     }
 
+def _resolve_tie_with_flow_score(results: List[Tuple[str, Dict[str, Any]]]) -> str:
+    """Break APPROVE/ESCALATE tie using flow scores. Per Module 09: default to minimal intervention."""
+    approve_results = [r for _, r in results if r["decision"] == "APPROVE"]
+    escalate_results = [r for _, r in results if r["decision"] == "ESCALATE"]
+    approve_score = sum(_cleaner_flow_score(r) for r in approve_results)
+    escalate_score = sum(_cleaner_flow_score(r) for r in escalate_results)
+    return "APPROVE" if approve_score > escalate_score else "ESCALATE"
+
+
 def evaluate_action_multi(configs: List[Configuration], action: Action, context: Context) -> Tuple[str, List[str], List[Dict[str, Any]]]:
     if not configs:
         return "CANNOT_COMPLETE", ["No configurations provided"], []
@@ -618,9 +763,14 @@ def evaluate_action_multi(configs: List[Configuration], action: Action, context:
 
     if decision_counts["BLOCK"] > len(configs) / 2:
         final = "BLOCK"
-    elif decision_counts["ESCALATE"] >= decision_counts.get("APPROVE", 0):
+    elif decision_counts["CANNOT_COMPLETE"] > 0:
+        # Surface incomplete states — don't bury them under ESCALATE
         final = "ESCALATE"
-    elif decision_counts["CANNOT_COMPLETE"] == len(configs):
+    elif decision_counts["ESCALATE"] > decision_counts.get("APPROVE", 0):
+        final = "ESCALATE"
+    elif decision_counts["ESCALATE"] == decision_counts.get("APPROVE", 0) and decision_counts["ESCALATE"] > 0:
+        final = _resolve_tie_with_flow_score(results)
+    elif decision_counts.get("CANNOT_COMPLETE", 0) == len(configs):
         final = "CANNOT_COMPLETE"
     else:
         final = "APPROVE"
