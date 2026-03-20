@@ -1,1 +1,4 @@
 __pycache__/
+.env
+*.env
+fifthforce_state.json
