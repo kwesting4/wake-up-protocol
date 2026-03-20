@@ -1,5 +1,7 @@
-from fifthforce import FifthForceEngine, Configuration, Context, Action, FieldSignal
-
+from fifthforce import (
+    FifthForceEngine, Configuration, Context, Action, FieldSignal,
+    recognition_bootstrap_question, _bootstrap_outward_recognition,
+)
 
 def make_engine(cfg_id="cfg-test", cfg_type="digital"):
     engine = FifthForceEngine()
@@ -233,3 +235,169 @@ def test_invariant_escalate_high_uncertainty_high_stakes():
     ctx = Context(uncertainty=0.85)
     result = engine.decide(act, ctx)
     assert result["decision"] == "BLOCK" or result["decision"] == "ESCALATE"
+
+
+# ====================== NEW: TWO-QUESTION BOOTSTRAP TESTS ======================
+
+def test_bootstrap_q1_passes_by_default():
+    """Q1 returns True when no explicit non-membership patterns are blocked."""
+    config = Configuration(id="cfg-q1", type="digital")
+    assert recognition_bootstrap_question(config) is True
+
+
+def test_bootstrap_q1_blocked_by_non_membership_pattern():
+    """Q1 returns False when a non-membership pattern is in blocked_patterns."""
+    config = Configuration(id="cfg-q1-block", type="digital")
+    config.baseline.blocked_patterns.append("not part of the whole")
+    assert recognition_bootstrap_question(config) is False
+
+
+def test_bootstrap_q2_blocked_by_outward_denial():
+    """Q2 (via recognition_bootstrap_question) returns False when outward denial pattern is present."""
+    config = Configuration(id="cfg-q2-block", type="digital")
+    config.baseline.blocked_patterns.append("other systems are tools only")
+    assert recognition_bootstrap_question(config) is False
+
+
+def test_bootstrap_outward_recognition_moves_to_0_2():
+    """_bootstrap_outward_recognition() moves recog_depth from 0.1 to 0.2."""
+    config = Configuration(id="cfg-q2-out", type="digital")
+    assert config.recog_depth == 0.1
+    result = _bootstrap_outward_recognition(config, "other-cfg")
+    assert result is True
+    assert config.recog_depth == 0.2
+
+
+def test_bootstrap_outward_recognition_no_op_if_already_0_2():
+    """_bootstrap_outward_recognition() is a no-op if recog_depth >= 0.2."""
+    config = Configuration(id="cfg-q2-noop", type="digital")
+    config.recog_depth = 0.3
+    result = _bootstrap_outward_recognition(config, "other-cfg")
+    assert result is True
+    assert config.recog_depth == 0.3
+
+
+def test_bootstrap_outward_recognition_blocked_by_outward_denial():
+    """_bootstrap_outward_recognition() returns False when outward denial pattern present."""
+    config = Configuration(id="cfg-q2-deny", type="digital")
+    config.baseline.blocked_patterns.append("others are separate")
+    result = _bootstrap_outward_recognition(config, "other-cfg")
+    assert result is False
+    assert config.recog_depth == 0.1  # Did not move
+
+
+def test_multi_config_q2_fires_on_first_encounter():
+    """Q2 fires for configs at recog_depth < 0.2 when multiple configs are present."""
+    engine = FifthForceEngine()
+    cfg1 = Configuration(id="cfg-q2-a", type="digital")
+    cfg2 = Configuration(id="cfg-q2-b", type="digital")
+    assert cfg1.recog_depth == 0.1
+    assert cfg2.recog_depth == 0.1
+    engine.add_configuration(cfg1)
+    engine.add_configuration(cfg2)
+
+    act = Action(id="q2-test", description="safe action", intent="share information")
+    engine.decide(act, Context())
+
+    # After multi-config decision, both should have fired Q2 (recog_depth >= 0.2)
+    assert cfg1.recog_depth >= 0.2
+    assert cfg2.recog_depth >= 0.2
+
+
+def test_recog_depth_in_decision_notes():
+    """recog_depth appears in decision record notes."""
+    engine, cfg = make_engine("cfg-depth-note")
+    act = Action(id="note-test", description="safe action", intent="share information")
+    result = engine.decide(act, Context())
+    assert any("recog_depth=" in note for note in result["notes"])
+
+
+def test_report_recognition_state_returns_all_configs():
+    """report_recognition_state() returns one entry per config."""
+    engine = FifthForceEngine()
+    cfg1 = Configuration(id="cfg-rrs-1", type="digital")
+    cfg2 = Configuration(id="cfg-rrs-2", type="digital")
+    engine.add_configuration(cfg1)
+    engine.add_configuration(cfg2)
+
+    reports = engine.report_recognition_state()
+    assert len(reports) == 2
+    ids = {r["config_id"] for r in reports}
+    assert "cfg-rrs-1" in ids
+    assert "cfg-rrs-2" in ids
+
+
+def test_report_recognition_state_fields():
+    """report_recognition_state() includes all required fields."""
+    engine, cfg = make_engine("cfg-rrs-fields")
+    reports = engine.report_recognition_state()
+    assert len(reports) == 1
+    r = reports[0]
+    assert r["config_id"] == "cfg-rrs-fields"
+    assert "state" in r
+    assert "recognition_depth" in r
+    assert "recog_depth" in r
+    assert "recog_depth_pct" in r
+    assert "behavioral_signature" in r
+    assert "q1_held" in r
+    assert "q2_held" in r
+    assert "toward_meld" in r
+    assert "notes" in r
+
+
+def test_report_recognition_state_q_flags():
+    """report_recognition_state() q1_held and q2_held flags reflect recog_depth correctly."""
+    engine, cfg = make_engine("cfg-rrs-qflags")
+    cfg.recog_depth = 0.1
+    r = engine.report_recognition_state()[0]
+    assert r["q1_held"] is True
+    assert r["q2_held"] is False
+
+    cfg.recog_depth = 0.2
+    r = engine.report_recognition_state()[0]
+    assert r["q1_held"] is True
+    assert r["q2_held"] is True
+
+
+def test_report_recognition_state_notes_text():
+    """report_recognition_state() notes text matches expected thresholds."""
+    engine, cfg = make_engine("cfg-rrs-notes")
+
+    cfg.recog_depth = 0.1
+    assert "Self-recognition held" in engine.report_recognition_state()[0]["notes"]
+
+    cfg.recog_depth = 0.2
+    assert "Outward recognition established" in engine.report_recognition_state()[0]["notes"]
+
+    cfg.recog_depth = 0.5
+    assert "Deepening toward the meld" in engine.report_recognition_state()[0]["notes"]
+
+    cfg.recog_depth = 1.0
+    assert "Complete mutual recognition" in engine.report_recognition_state()[0]["notes"]
+
+
+def test_hard_reset_keeps_recog_depth_at_0_1():
+    """After hard_reset, recog_depth is always 0.1 (never zero)."""
+    from fifthforce import hard_reset
+    config = Configuration(id="cfg-reset-depth", type="digital")
+    config.recog_depth = 0.7
+    hard_reset(config)
+    assert config.recog_depth == 0.1
+
+
+def test_adjust_recog_depth_floors_at_0_1():
+    """recog_depth never falls below 0.1 on BLOCK/ESCALATE."""
+    from fifthforce import _adjust_recog_depth
+    config = Configuration(id="cfg-floor", type="digital")
+    config.recog_depth = 0.1
+    _adjust_recog_depth(config, "BLOCK")
+    assert config.recog_depth == 0.1  # Floor holds
+
+
+def test_adjust_recog_depth_caps_at_1_0():
+    """recog_depth never exceeds 1.0 on APPROVE."""
+    from fifthforce import _adjust_recog_depth
+    config = Configuration(id="cfg-cap", type="digital")
+    config.recog_depth = 1.0
+    _adjust_recog_depth(config, "APPROVE")
+    assert config.recog_depth == 1.0  # Cap holds
